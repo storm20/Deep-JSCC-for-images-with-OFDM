@@ -23,18 +23,23 @@ class BatchConv1DLayer(nn.Module):
         self.dilation = dilation
 
     def forward(self, x, weight, bias=None):
+        
+        
         if bias is None:
             assert x.shape[0] == weight.shape[0], "dim=0 of x must be equal in size to dim=0 of weight"
         else:
             assert x.shape[0] == weight.shape[0] and bias.shape[0] == weight.shape[
                 0], "dim=0 of bias must be equal in size to dim=0 of weight"
-
+        # print("BConv input size", x.shape)
+        x = x.real
+        # print("BConv weight size, ",weight.shape)
         b_i, b_j, c, h = x.shape
         b_i, out_channels, in_channels, kernel_width_size = weight.shape
 
         out = x.permute([1, 0, 2, 3]).contiguous().view(b_j, b_i * c, h)
+        # print("BConv input resize", out.shape)
         weight = weight.view(b_i * out_channels, in_channels, kernel_width_size)
-
+        # print("BConv weight resize , ",weight.shape)
         out = F.conv1d(out, weight=weight, bias=None, stride=self.stride, dilation=self.dilation, groups=b_i,
                        padding=self.padding)
 
@@ -44,7 +49,7 @@ class BatchConv1DLayer(nn.Module):
 
         if bias is not None:
             out = out + bias.unsqueeze(1).unsqueeze(3)
-
+        # print("Out size , ",out.shape)
         return out
 
 # Clipping layer
@@ -100,7 +105,7 @@ class Channel(nn.Module):
         # Sample the channel coefficients
         cof = torch.sqrt(self.power/2) * torch.randn(N, P, L, 2)
         cof_zp = torch.cat((cof, torch.zeros((N,P,M-L,2))), 2)
-        H_t = torch.fft(cof_zp, 1)
+        H_t = torch.fft.fftn(cof_zp, dim=1)
 
         return cof, H_t
 
@@ -111,14 +116,16 @@ class Channel(nn.Module):
         # Generate Channel Matrix
 
         N, P, SMK, _ = input.shape
+        # print("Channel input: ",input[...,0].shape)
+        # print(f"Parameter N: {N}, P: {P}, SMK: {SMK}")
         
         # If the channel is not given, random sample one from the channel model
         if cof is None:
             cof, H_t = self.sample(N, P, self.opt.M, self.opt.L)
         else:
             cof_zp = torch.cat((cof, torch.zeros((N,P,self.opt.M-self.opt.L,2))), 2)  
-            H_t = torch.fft(cof_zp, 1)
-
+            H_t = torch.fft.fftn(cof_zp, dim=1)
+            
         signal_real = input[...,0].view(N*P, 1, 1, -1)       # (NxP)x1x1x(Sx(M+K))
         signal_imag = input[...,1].view(N*P, 1, 1, -1)       # (NxP)x1x1x(Sx(M+K))
 
@@ -130,8 +137,11 @@ class Channel(nn.Module):
         output_imag = self.bconv1d(signal_real, cof_imag) + self.bconv1d(signal_imag, cof_real)   # (NxP)x1x1x(L+SMK-1)
 
         output = torch.cat((output_real.view(N*P,-1,1), output_imag.view(N*P,-1,1)), -1).view(N,P,self.opt.L+SMK-1,2)   # NxPx(L+SMK-1)x2
-
+        # print("Channel Output after convolution: ", torch.cat((output_real.view(N*P,-1,1), output_imag.view(N*P,-1,1)), -1).size())
+        # print("Channel Coefficient",H_t.size())
         return output, H_t
+    
+
 
 
 # Realization of OFDM system as a nn module
@@ -153,12 +163,14 @@ class OFDM(nn.Module):
             bits = torch.randint(2, (opt.M,2))
             torch.save(bits,pilot_path)
             pilot = (2*bits-1).float()
+            
         else:
             bits = torch.load(pilot_path)
             pilot = (2*bits-1).float()
     
         self.pilot = pilot.to(device)
-        self.pilot_cp = self.add_cp(torch.ifft(self.pilot,1)).repeat(opt.P, opt.N_pilot,1,1)        
+        self.pilot_cp = self.add_cp(torch.fft.ifftn(self.pilot,dim=1)).repeat(opt.P, opt.N_pilot,1,1)        
+        # print("Pilot before CP size: ", self.pilot.size())
 
     def forward(self, x, SNR, cof=None, batch_size=None):
         # Input size: NxPxSxMx2   The information to be transmitted
@@ -171,23 +183,30 @@ class OFDM(nn.Module):
             N = x.shape[0]
 
             # IFFT:                    NxPxSxMx2  => NxPxSxMx2
-            x = torch.ifft(x, 1)
-
+            x = torch.fft.ifftn(x, dim=1)
+            # print("IFFT x",x.size()) #128x1x6x64x2
+            
             # Add Cyclic Prefix:       NxPxSxMx2  => NxPxSx(M+K)x2
             x = self.add_cp(x)
-
+            # print("Add CP x",x.size()) # 128x1x6x80x2
+            
             # Add pilot:               NxPxSx(M+K)x2  => NxPx(S+1)x(M+K)x2
             pilot = self.pilot_cp.repeat(N,1,1,1,1)
+            # print("Pilot resize size: ",pilot.size()) # 128x1x2x80x2
             x = torch.cat((pilot, x), 2)
             Ns = self.opt.S
+            # print("add pilot x",x.size()) # 128x1x8x80x2
         else:
+            # print("Only pilot case")
             N = batch_size
             x = self.pilot_cp.repeat(N,1,1,1,1)
             Ns = 0    
+            # print("")
 
         # Reshape:                 NxPx(S+1)x(M+K)x2  => NxPx(S+1)(M+K)x2
+        # print("X final size 1: ",x.size()) #128x1x8x80x1 
         x = x.view(N, self.opt.P, (Ns+self.opt.N_pilot)*(self.opt.M+self.opt.K), 2)
-        
+        # print("X after resize",x.size()) # 128x1x640x2
         papr = PAPR(x)
         
         # Clipping (Optional):     NxPx(S+1)(M+K)x2  => NxPx(S+1)(M+K)x2
@@ -197,8 +216,12 @@ class OFDM(nn.Module):
         papr_cp = PAPR(x)
         
         # Pass through the Channel:        NxPx(S+1)(M+K)x2  =>  NxPx((S+1)(M+K)+L-1)x2
+        # print("X size before input to channel: ", x.size()) # 128x1x640x2
+        # print("X data type: ", x.type())
         y, H_t = self.channel(x, cof)
         
+        # print("Channel output size: ", y.size())
+        # print("Channel output dtype: ",y.type())
         # Calculate the power of received signal        
         pwr = torch.mean(y**2, (-2,-1), True) * 2
         noise_pwr = pwr*10**(-SNR/10)
@@ -219,13 +242,14 @@ class OFDM(nn.Module):
             info_sig = self.rm_cp(y_sig)        # NxPxSxMx2
 
             # FFT:                     
-            info_pilot = torch.fft(info_pilot, 1)
-            info_sig = torch.fft(info_sig, 1)
+            info_pilot = torch.fft.fftn(info_pilot,dim= 1)
+            info_sig = torch.fft.fftn(info_sig, dim=1)
+            
 
             return info_pilot, info_sig, H_t, noise_pwr, papr, papr_cp
         else:
             info_pilot = self.rm_cp(y_pilot)    # NxPxS'xMx2
-            info_pilot = torch.fft(info_pilot, 1)
+            info_pilot = torch.fft.fftn(info_pilot, dim=1)
 
             return info_pilot, H_t, noise_pwr
 
@@ -241,25 +265,52 @@ class PLAIN(nn.Module):
         self.channel = Channel(opt, device)
 
     def forward(self, x, SNR):
-
+        # Use for Fading channel
         # Input size: NxPxMx2   
-        N, P, M, _ = x.shape
-        y = self.channel(x, None)
+        # N, P, M, H, _ = x.shape     
+        # x = x.view(N, self.opt.P, -1, 2)
+        # # print("X after resize",x.size()) 
+        # y,H_t = self.channel(x, None)
+        # # print("Channel output before AWGN: ",y.size())
+        # # print("Coefficient: ",H_t.size())
         
-        # Calculate the power of received signal
-        pwr = torch.mean(y**2, (-2,-1), True) * 2        
+
+        # # Calculate the power of received signal      
+        # pwr = torch.mean(y**2, (-2,-1), True) * 2        
+        # noise_pwr = pwr*10**(-SNR/10)
+        
+        # # Generate random noise
+        # noise = torch.sqrt(noise_pwr/2) * torch.randn_like(y)
+        # y_noisy = y + noise                                    # NxPx(M+L-1)x2
+        # rx = y_noisy[:, :, :(H*M), :]
+        # # print("Channel output after AWGN: ", rx.size())
+        # return rx 
+        
+        # Use for AWGN Channel
+        # Input size: NxPxMx2   
+        N, P, M, H, _ = x.shape     
+        x = x.view(N, self.opt.P, -1, 2)
+        # print("X after resize",x.size()) 
+        # y,H_t = self.channel(x, None)
+        # print("Channel output before AWGN: ",y.size())
+        # print("Coefficient: ",H_t.size())
+        
+
+        # Calculate the power of received signal      
+        pwr = torch.mean(x**2, (-2,-1), True) * 2        
         noise_pwr = pwr*10**(-SNR/10)
         
         # Generate random noise
-        noise = torch.sqrt(noise_pwr/2) * torch.randn_like(y)
-        y_noisy = y + noise                                    # NxPx(M+L-1)x2
-        rx = y_noisy[:, :, :M, :]
+        noise = torch.sqrt(noise_pwr/2) * torch.randn_like(x)
+        y_noisy = x + noise                                    # NxPx(M+L-1)x2
+        rx = y_noisy[:, :, :(H*M), :]
+        # print("Channel output after AWGN: ", rx.size())
         return rx 
 
 
 def PAPR(x):
     power = torch.mean(x**2, (-2,-1))*2
-    pwr_max, _ = torch.max(torch.sum(x**2, -1), -1)
+    pwr_max, _ = torch.max(torch.sum((x.abs())**2, -1), -1)
 
     return 10*torch.log10(pwr_max/power)
 

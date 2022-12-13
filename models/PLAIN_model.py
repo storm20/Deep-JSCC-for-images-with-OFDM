@@ -44,7 +44,7 @@ class PLAINModel(BaseModel):
                                         opt.norm_D, opt.init_type, opt.init_gain, self.gpu_ids)
         
 
-        # print('---------- Networks initialized -------------')
+        print('---------- Networks initialized -------------')
 
         # set loss functions and optimizers
         if self.isTrain:
@@ -65,13 +65,15 @@ class PLAINModel(BaseModel):
         self.normalize = networks.Normalize()
         self.opt = opt
 
-        self.channel = channel.plain_channel(opt, self.device, pwr=1)
+        # self.channel = channel.PLAIN(opt, self.device, pwr=1)
+        self.channel = channel.PLAIN(opt, self.device)
         
 
     def name(self):
         return 'PLAIN_Model'
 
     def set_input(self, image):
+        # print("Input image: ",image.size())
         self.real_A = image.clone().to(self.device)
         self.real_B = image.clone().to(self.device)
 
@@ -86,15 +88,29 @@ class PLAINModel(BaseModel):
         self.image_paths = path
         
     def forward(self):
-
         # Generate latent vector
-        self.latent = self.netE(self.real_A)
-
+        self.latent = self.netE(self.real_A) # 128x12x8x8
+        # print("output of encoder size: ", self.latent.shape)
+        N, C, H, W = self.latent.shape
+        # print("Parameter: ", N,C,H,W)
+        
+        
+        # print("Test size: ",self.tx.size())
         # 2. Pass the channel
-        latent = self.channel(self.latent, self.opt.SNR)
-
+        self.tx = self.latent.contiguous().view(N,self.opt.P ,self.opt.S ,-1, 2)
+        # print("Latent size resize: ",self.tx.size())
+        
+        latent = self.channel(self.normalize(self.tx, 1), self.opt.SNR) # 128x12X8X8
+        # print("Channel output size: ",latent.size())
+        temp = latent.reshape(N,C,H,W)
+        # latent = self.channel(self.tx, self.opt.SNR)
+        
+        # print("Channel output resize: ",temp.size())
+        
         # 3. Reconstruction
-        self.fake = self.netG(latent)
+        # self.fake = self.netG(latent)
+        self.fake = self.netG(temp)
+        # print("Fake size forward pass: ",self.fake.size()) # have to be 128x12x8x8
 
     def backward_D(self):
         """Calculate GAN loss for the discriminator"""
@@ -135,6 +151,8 @@ class PLAINModel(BaseModel):
             self.loss_G_GAN = 0
             self.loss_G_Feat = 0 
 
+        # print("Fake size: ", self.fake.size())/
+        # print("Real size: ",self.real_B.size())
         self.loss_G_L2 = self.criterionL2(self.fake, self.real_B) * self.opt.lambda_L2
         # combine loss and calculate gradients
         self.loss_G = self.loss_G_GAN + self.loss_G_Feat + self.loss_G_L2

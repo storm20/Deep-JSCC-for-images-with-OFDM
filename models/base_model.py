@@ -69,9 +69,14 @@ class BaseModel(torch.nn.Module):
     def get_current_losses(self):
         """Return traning losses / errors. train.py will print out these errors on console, and save them to a file"""
         errors_ret = OrderedDict()
+        # print(self.loss_names)
         for name in self.loss_names:
             if isinstance(name, str):
-                errors_ret[name] = float(getattr(self, 'loss_' + name))  # float(...) works for both scalar tensor and float number
+                # errors_ret[name] = float(getattr(self, 'loss_' + name))  # float(...) works for both scalar tensor and float number
+                errors_ret[name] = getattr(self, 'loss_' + name)  # float(...) works for both scalar tensor and float number
+        # print(errors_ret)
+        # errors_ret = float(errors_ret['G_L2'])
+        # print(errors_ret.items())
         return errors_ret
 
     def setup(self, opt):
@@ -85,7 +90,7 @@ class BaseModel(torch.nn.Module):
         if not self.isTrain or opt.continue_train:
             load_suffix = 'iter_%d' % opt.load_iter if opt.load_iter > 0 else opt.epoch            
             self.load_networks(load_suffix)
-        self.print_networks(opt.verbose)
+        # self.print_networks(opt.verbose)
 
     def eval(self):
         """Make models eval mode during test time"""
@@ -169,7 +174,7 @@ class BaseModel(torch.nn.Module):
         Parameters:
             verbose (bool) -- if verbose: print the network architecture
         """
-        print('---------- Networks initialized -------------')
+        # print('---------- Networks initialized -------------')
         for name in self.model_names:
             if isinstance(name, str):
                 net = getattr(self, 'net' + name)
@@ -179,7 +184,7 @@ class BaseModel(torch.nn.Module):
                 if verbose:
                     print(net)
                 print('[Network %s] Total number of parameters : %.6f M' % (name, num_params / 1e6))
-        print('-----------------------------------------------')
+        # print('-----------------------------------------------')
 
     def set_requires_grad(self, nets, requires_grad=False):
         """Set requies_grad=Fasle for all the networks to avoid unnecessary computations

@@ -1,0 +1,9 @@
+data/cifar-10-batches-py
+*.pdf
+*.gz
+*.pyc
+**/__pycache__
+test_results/
+checkpoints
+.vscode/
+results/

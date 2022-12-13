@@ -5,7 +5,7 @@ import ntpath
 import time
 from . import util, html
 from subprocess import Popen, PIPE
-
+import torch
 
 if sys.version_info[0] == 2:
     VisdomExceptionBase = Exception
@@ -71,12 +71,13 @@ class Visualizer():
             self.ncols = opt.display_ncols
             self.vis = visdom.Visdom(server=opt.display_server, port=opt.display_port, env=opt.display_env)
             if not self.vis.check_connection():
+                print("This line is printed if check connection fails")
                 self.create_visdom_connections()
 
         if self.use_html:  # create an HTML object at <checkpoints_dir>/web/; images will be saved under <checkpoints_dir>/web/images/
             self.web_dir = os.path.join(opt.checkpoints_dir, opt.name, 'web')
             self.img_dir = os.path.join(self.web_dir, 'images')
-            print('create web directory %s...' % self.web_dir)
+            # print('create web directory %s...' % self.web_dir)
             util.mkdirs([self.web_dir, self.img_dir])
         # create a logging file to store training losses
         self.log_name = os.path.join(opt.checkpoints_dir, opt.name, 'loss_log.txt')
@@ -91,6 +92,7 @@ class Visualizer():
     def create_visdom_connections(self):
         """If the program could not connect to Visdom server, this function will start a new server at port < self.port > """
         cmd = sys.executable + ' -m visdom.server -p %d &>/dev/null &' % self.port
+        print("This line is printed if new connection to visdom is made")
         print('\n\nCould not connect to Visdom server. \n Trying to start a server....')
         print('Command: %s' % cmd)
         Popen(cmd, shell=True, stdout=PIPE, stderr=PIPE)
@@ -186,8 +188,22 @@ class Visualizer():
         """
         if not hasattr(self, 'plot_data'):
             self.plot_data = {'X': [], 'Y': [], 'legend': list(losses.keys())}
+        # print(losses.items())
+        # print("TEST", losses['G_L2'].item())
         self.plot_data['X'].append(epoch + counter_ratio)
-        self.plot_data['Y'].append([losses[k] for k in self.plot_data['legend']])
+        # print(self.plot_data['legend'])
+        temp = []
+        for k in self.plot_data['legend']:
+            if torch.is_tensor(losses[k]):
+                if (isinstance(losses[k].item(),complex)):
+                    temp.append(abs(losses[k].item()))
+                else:
+                    temp.append(losses[k].item())
+            else:
+                temp.append(losses[k])
+        self.plot_data['Y'].append(temp)
+        # print(len(self.plot_data['X']))
+        # print(len(self.plot_data['Y']))
         
         try:
             self.vis.line(
@@ -215,8 +231,17 @@ class Visualizer():
         """
         message = '(epoch: %d, iters: %d, time: %.3f, data: %.3f) ' % (epoch, iters, t_comp, t_data)
         for k, v in losses.items():
-            message += '%s: %.3f ' % (k, v)
+            # print(k,v.item())
+            # print(type(v.item()))
+            if (torch.is_tensor(v)):
+                if isinstance(v.item(),complex):
+                    message += '%s: %.3f ' % (k, float(abs(v.item())))
+                else:
+                    message += '%s: %.3f ' % (k, float(v.item()))
+            else:
+                message += '%s: %.3f ' % (k, float(v))
 
         print(message)  # print the message
         with open(self.log_name, "a") as log_file:
             log_file.write('%s\n' % message)  # save the message
+            

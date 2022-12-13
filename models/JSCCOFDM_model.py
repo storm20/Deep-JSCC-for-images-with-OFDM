@@ -70,7 +70,7 @@ class JSCCOFDMModel(BaseModel):
                                         norm=opt.norm_EG, init_type=opt.init_type, init_gain=opt.init_gain, gpu_ids=self.gpu_ids)
 
 
-        print('---------- Networks initialized -------------')
+        # print('---------- Networks initialized -------------')s
 
         # set loss functions and optimizers
         if self.isTrain:
@@ -118,26 +118,37 @@ class JSCCOFDMModel(BaseModel):
             latent = self.netE(self.real_A, H)
         else:
             cof = None
+            print("Image input: ",self.real_A.size())
             latent = self.netE(self.real_A)
+            print("Latent vector:",latent.size())
         
         self.tx = latent.view(N, self.opt.P, self.opt.S, 2, self.opt.M).permute(0,1,2,4,3)
-        
+        print("X as Channel input size:",self.tx.size())
+        print("X as Channel input dtype:",self.tx.type())
         out_pilot, out_sig, self.H_true, noise_pwr, self.PAPR, self.PAPR_cp = self.channel(self.normalize(self.tx, 1), SNR=self.opt.SNR, cof=cof)
-        
+        print("OFDM CHannel output size: ",out_sig.size())
+        print("OFDM CHannel output dtype: ",out_sig.type())
         N, C, H, W = latent.shape
 
         if self.opt.feedforward == 'IMPLICIT':
             r1 = self.channel.pilot.repeat(N,1,1,1,1)
+            # print("r1",r1.type())
             r2 = out_pilot
+            # print("r2",r2.imag)
             r3 = out_sig
-            dec_in = torch.cat((r1, r2, r3), 2).contiguous().permute(0,1,2,4,3).contiguous().view(N, -1, H, W)
+            # print("r3",r3.imag)
+            
+            dec_in = torch.cat((r1, r2.real, r3.real), 2).contiguous().permute(0,1,2,4,3).contiguous().view(N, -1, H, W)
+            print("Input to generator: ",dec_in.size())
             self.fake = self.netG(dec_in)
+            print("Output of Generator size ", self.fake.size())
         elif self.opt.feedforward == 'EXPLICIT-CE':
             # Channel estimation
             self.channel_estimation(out_pilot, noise_pwr)
             r1 = self.H_est
             r2 = out_sig             
             dec_in = torch.cat((r1, r2), 2).contiguous().permute(0,1,2,4,3).contiguous().view(N, -1, H, W)
+            
             self.fake = self.netG(dec_in)
         elif self.opt.feedforward == 'EXPLICIT-CE-EQ':
             self.channel_estimation(out_pilot, noise_pwr)

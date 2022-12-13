@@ -9,10 +9,11 @@ import numpy as np
 from torch.nn import functional as F
 from typing import List, Callable, Union, Any, TypeVar, Tuple
 from math import exp
-
+from torchinfo import summary
+from torchsummary import summary
 # from torch import tensor as Tensor
 
-Tensor = TypeVar('torch.tensor')
+# Tensor = TypeVar("torch.tensor")
 ###############################################################################
 # Functions
 ###############################################################################
@@ -82,7 +83,7 @@ def init_weights(net, init_type='normal', init_gain=0.02):
             init.normal_(m.weight.data, 1.0, init_gain)
             init.constant_(m.bias.data, 0.0)
 
-    print('initialize network with %s' % init_type)
+    # print('initialize network with %s' % init_type)
     net.apply(init_func)  # apply the initialization function <init_func>    
 
 def init_net(net, init_type='normal', init_gain=0.02, gpu_ids=[]):
@@ -96,7 +97,13 @@ def init_net(net, init_type='normal', init_gain=0.02, gpu_ids=[]):
     Return an initialized network.
     """
     if len(gpu_ids) > 0:
-        assert(torch.cuda.is_available())        
+        assert(torch.cuda.is_available())  
+        try:
+            summary(net,(3,32,32),device="cpu")  
+            print(net)    
+        except:
+            summary(net,(12,8,8),device="cpu")
+            print(net)
         net.to(gpu_ids[0])
         net = torch.nn.DataParallel(net, gpu_ids)  # multi-GPUs
     init_weights(net, init_type, init_gain=init_gain)
@@ -151,12 +158,14 @@ def define_E(input_nc, ngf, max_ngf, n_downsample, C_channel, n_blocks, norm='in
     net = None
     norm_layer = get_norm_layer(norm_type=norm)
     net = Encoder(input_nc=input_nc, ngf=ngf, max_ngf=max_ngf, C_channel=C_channel, n_blocks=n_blocks, n_downsampling=n_downsample, norm_layer=norm_layer, padding_type="reflect", first_kernel=first_kernel, first_add_C=first_add_C)    
+    # print("Called by Encoder")
     return init_net(net, init_type, init_gain, gpu_ids)
 
 def define_G(output_nc, ngf, max_ngf, n_downsample, C_channel, n_blocks, norm="instance", init_type='kaiming', init_gain=0.02, gpu_ids=[], first_kernel=7, activation='sigmoid'):
     net = None
     norm_layer = get_norm_layer(norm_type=norm)
     net = Generator(output_nc=output_nc, ngf=ngf, max_ngf=max_ngf, C_channel=C_channel, n_blocks=n_blocks, n_downsampling=n_downsample, norm_layer=norm_layer, padding_type="reflect", first_kernel=first_kernel, activation_=activation)
+    # print("Called by Generator")
     return init_net(net, init_type, init_gain, gpu_ids)
 
 def define_D(input_nc, ndf, n_layers_D=3, norm='batch', init_type='normal', init_gain=0.02, gpu_ids=[]):
@@ -364,7 +373,7 @@ class Generator(nn.Module):
         mult = 2 ** n_downsampling
         ngf_dim = min(ngf * mult, max_ngf)
         model = [nn.Conv2d(C_channel,ngf_dim,kernel_size=3, padding=1 ,stride=1, bias=use_bias)]
-
+        
         for i in range(n_blocks):
             model += [ResnetBlock(ngf_dim, padding_type=padding_type, norm_layer=norm_layer, use_dropout=False, use_bias=use_bias)]
 
@@ -383,15 +392,23 @@ class Generator(nn.Module):
             model +=[nn.Tanh()]
         elif activation_ == 'sigmoid':
             model +=[nn.Sigmoid()]
-
+            
+        # print(type(model))
+        # summary(model, (12,32,32))
         self.model = nn.Sequential(*model)
+        
+        
 
     def forward(self, input):
 
         if self.activation_=='tanh':
             return self.model(input)
         elif self.activation_=='sigmoid':
+            # temp = self.model(input)
+            # print("Output of generator: ",temp.size())
+            # print("Generator input call",input.size())
             return 2*self.model(input)-1
+    
 
 #########################################################################################
 # Residual block
